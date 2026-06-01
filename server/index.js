@@ -1,69 +1,30 @@
 const { Server } = require("socket.io");
 const qrcode = require("qrcode-terminal");
-const ip = require("local-ip-address");
+const localtunnel = require("localtunnel");
 const blessed = require("blessed");
 const chalk = require("chalk");
 
-// --- Socket Setup ---
-const io = new Server(3000, { cors: { origin: "*" } });
-const myIp = ip();
-const connectionString = `http://${myIp}:3000`;
+const PORT = 3000;
+const io = new Server(PORT, { cors: { origin: "*" } });
 
-// --- UI Setup (Blessed) ---
-const screen = blessed.screen({
-  smartCSR: true,
-  title: 'Linconnect Terminal',
-  fullUnicode: true // Better support for symbols/emojis
-});
-
-// Container for the chat
+// --- UI Setup ---
+const screen = blessed.screen({ smartCSR: true, title: 'Linconnect Terminal', fullUnicode: true });
 const chatBox = blessed.log({
-  top: 0,
-  left: 0,
-  width: '100%',
-  height: '80%',
+  top: 0, left: 0, width: '100%', height: '80%',
   label: ' {bold}Linconnect History{/bold} ',
   border: { type: 'line' },
-  style: {
-    border: { fg: '#3B82F6' },
-    label: { fg: 'white' }
-  },
-  scrollable: true,
-  alwaysScroll: true,
-  scrollbar: {
-    ch: ' ',
-    track: { bg: '#2D3748' },
-    style: { inverse: true }
-  },
-  tags: true
+  style: { border: { fg: '#3B82F6' }, label: { fg: 'white' } },
+  scrollable: true, alwaysScroll: true, tags: true
 });
-
-// Container for instructions/status
 const statusBar = blessed.box({
-  top: '80%',
-  left: 0,
-  width: '100%',
-  height: '8%',
-  content: ` {bold}Status:{/bold} Waiting for connection... | {bold}Exit:{/bold} Type '/exit' or press ESC `,
-  style: {
-    fg: 'white',
-    bg: '#1E293B'
-  },
-  tags: true
+  top: '80%', left: 0, width: '100%', height: '8%',
+  content: " {bold}Status:{/bold} Initializing Tunnel... ",
+  style: { fg: 'white', bg: '#1E293B' }, tags: true
 });
-
-// Input field
 const inputField = blessed.textbox({
-  bottom: 0,
-  left: 0,
-  width: '100%',
-  height: 3,
-  label: ' {bold}Message{/bold} ',
-  border: { type: 'line' },
-  style: {
-    border: { fg: '#4338CA' }
-  },
-  inputOnFocus: true
+  bottom: 0, left: 0, width: '100%', height: 3,
+  label: ' {bold}Message{/bold} ', border: { type: 'line' },
+  style: { border: { fg: '#4338CA' } }, inputOnFocus: true
 });
 
 screen.append(chatBox);
@@ -78,52 +39,62 @@ function log(msg) {
 // --- Logic ---
 let activeSocket = null;
 
-// Display QR Code
-chatBox.log(chalk.blue.bold(" LINCONNECT SERVER READY "));
-chatBox.log(" Scan this code on your phone app to connect:");
+async function startServer() {
+  log(chalk.blue.bold(" LINCONNECT V2.1 (WSL FIX) "));
+  log(" Creating secure tunnel for your phone...");
 
-qrcode.generate(connectionString, { small: true }, (code) => {
-  chatBox.log(code);
-  screen.render();
-});
+  try {
+    const tunnel = await localtunnel({ port: PORT });
+    
+    log(chalk.green("✔ Tunnel Active!"));
+    log(" Scan this code on your phone to connect:");
+
+    qrcode.generate(tunnel.url, { small: true }, (code) => {
+      chatBox.log(code);
+      screen.render();
+    });
+
+    statusBar.setContent(" {bold}Status:{/bold} {yellow-fg}Waiting for phone...{/yellow-fg} | {bold}Exit:{/bold} Type '/exit' ");
+    screen.render();
+
+    tunnel.on('close', () => {
+      log(chalk.red("Tunnel closed. Restarting..."));
+    });
+
+  } catch (err) {
+    log(chalk.red("Tunnel Error: " + err.message));
+  }
+}
 
 io.on("connection", (socket) => {
   activeSocket = socket;
-  chatBox.log(""); // Add space
-  log(chalk.green.bold("✔ ANDROID CONNECTED"));
-  statusBar.setContent(" {bold}Status:{/bold} {green-fg}Connected{/green-fg} | {bold}Exit:{/bold} Type '/exit' or press ESC ");
+  log(chalk.green.bold("\n✔ PHONE CONNECTED!"));
+  statusBar.setContent(" {bold}Status:{/bold} {green-fg}Connected{/green-fg} | {bold}Exit:{/bold} Type '/exit' ");
   
   socket.on("message", (msg) => {
     log(chalk.yellow.bold("Android: ") + msg);
   });
 
   socket.on("disconnect", () => {
-    log(chalk.red.bold("✖ DISCONNECTED"));
-    statusBar.setContent(" {bold}Status:{/bold} {red-fg}Offline{/red-fg} | {bold}Exit:{/bold} Type '/exit' or press ESC ");
+    log(chalk.red.bold("✖ PHONE DISCONNECTED"));
+    statusBar.setContent(" {bold}Status:{/bold} {red-fg}Offline{/red-fg} ");
     activeSocket = null;
   });
 });
 
 inputField.on('submit', (value) => {
-  if (value.toLowerCase() === '/exit') {
-    process.exit(0);
-  }
-  
+  if (value.toLowerCase() === '/exit') process.exit(0);
   if (value.trim() && activeSocket) {
     activeSocket.emit("message", value);
     log(chalk.blue.bold("Linux: ") + value);
   } else if (!activeSocket) {
-    log(chalk.red("Error: Connect phone first!"));
+    log(chalk.red("Error: Scan QR code first!"));
   }
-  
   inputField.clearValue();
   inputField.focus();
   screen.render();
 });
 
-// Exit triggers
 screen.key(['escape', 'q', 'C-c'], () => process.exit(0));
-
-// Initial Focus
 inputField.focus();
-screen.render();
+startServer();
