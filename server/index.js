@@ -5,7 +5,10 @@ const blessed = require("blessed");
 const chalk = require("chalk");
 
 const PORT = 3000;
-const io = new Server(PORT, { cors: { origin: "*" } });
+const io = new Server(PORT, { 
+  cors: { origin: "*" },
+  transports: ["websocket"] 
+});
 
 // --- UI Setup ---
 const screen = blessed.screen({ smartCSR: true, title: 'Linconnect Terminal', fullUnicode: true });
@@ -36,30 +39,27 @@ function log(msg) {
   screen.render();
 }
 
-// --- Logic ---
 let activeSocket = null;
 
 async function startServer() {
-  log(chalk.blue.bold(" LINCONNECT V2.1 (WSL FIX) "));
-  log(" Creating secure tunnel for your phone...");
+  log(chalk.blue.bold(" LINCONNECT V2.2 (CONNECTION FIX) "));
+  log(" Creating secure tunnel...");
 
   try {
     const tunnel = await localtunnel({ port: PORT });
     
-    log(chalk.green("✔ Tunnel Active!"));
-    log(" Scan this code on your phone to connect:");
+    // We append /?bypass=1 to bypass the localtunnel warning page
+    const tunnelUrl = tunnel.url;
+    log(chalk.green("✔ Tunnel Active: ") + tunnelUrl);
+    log(" Scan this code on your phone:");
 
-    qrcode.generate(tunnel.url, { small: true }, (code) => {
+    qrcode.generate(tunnelUrl, { small: true }, (code) => {
       chatBox.log(code);
       screen.render();
     });
 
-    statusBar.setContent(" {bold}Status:{/bold} {yellow-fg}Waiting for phone...{/yellow-fg} | {bold}Exit:{/bold} Type '/exit' ");
+    statusBar.setContent(" {bold}Status:{/bold} {yellow-fg}Waiting for phone...{/yellow-fg} ");
     screen.render();
-
-    tunnel.on('close', () => {
-      log(chalk.red("Tunnel closed. Restarting..."));
-    });
 
   } catch (err) {
     log(chalk.red("Tunnel Error: " + err.message));
@@ -69,7 +69,7 @@ async function startServer() {
 io.on("connection", (socket) => {
   activeSocket = socket;
   log(chalk.green.bold("\n✔ PHONE CONNECTED!"));
-  statusBar.setContent(" {bold}Status:{/bold} {green-fg}Connected{/green-fg} | {bold}Exit:{/bold} Type '/exit' ");
+  statusBar.setContent(" {bold}Status:{/bold} {green-fg}Connected{/green-fg} ");
   
   socket.on("message", (msg) => {
     log(chalk.yellow.bold("Android: ") + msg);
@@ -87,8 +87,6 @@ inputField.on('submit', (value) => {
   if (value.trim() && activeSocket) {
     activeSocket.emit("message", value);
     log(chalk.blue.bold("Linux: ") + value);
-  } else if (!activeSocket) {
-    log(chalk.red("Error: Scan QR code first!"));
   }
   inputField.clearValue();
   inputField.focus();

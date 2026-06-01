@@ -3,12 +3,13 @@ import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, Keyboard
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { io } from "socket.io-client";
 import { LinearGradient } from 'expo-linear-gradient';
-import { Send, Smartphone, Monitor, ShieldCheck, XCircle } from 'lucide-react-native';
+import { Send, Monitor, XCircle, AlertCircle } from 'lucide-react-native';
 
 export default function App() {
   const [hasPermission, setHasPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [socket, setSocket] = useState(null);
+  const [error, setError] = useState(null);
   const [message, setMessage] = useState('');
   const [chat, setChat] = useState([]);
   const flatListRef = useRef();
@@ -18,10 +19,29 @@ export default function App() {
 
   const handleBarCodeScanned = ({ data }) => {
     setScanned(true);
-    const newSocket = io(data);
+    setError(null);
+    console.log("Attempting to connect to:", data);
+
+    const newSocket = io(data, {
+      transports: ["websocket"],
+      reconnectionAttempts: 5,
+      timeout: 10000,
+      extraHeaders: {
+        "bypass-tunnel-reminder": "true" // Required for localtunnel
+      }
+    });
+
     newSocket.on("connect", () => {
       setSocket(newSocket);
+      setError(null);
     });
+
+    newSocket.on("connect_error", (err) => {
+      setError("Connection Failed: " + err.message);
+      setScanned(false);
+      newSocket.close();
+    });
+
     newSocket.on("message", (msg) => {
       setChat(prev => [...prev, { id: Date.now().toString(), text: msg, me: false }]);
     });
@@ -49,7 +69,16 @@ export default function App() {
             style={StyleSheet.absoluteFillObject}
           />
         </View>
-        {scanned && !socket && <Text style={styles.connecting}>Connecting...</Text>}
+        {scanned && !error && <Text style={styles.connecting}>Connecting...</Text>}
+        {error && (
+          <View style={styles.errorBox}>
+            <AlertCircle color="#EF4444" size={24} />
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity onPress={() => { setScanned(false); setError(null); }} style={styles.retryBtn}>
+              <Text style={{color: 'white', fontWeight: 'bold'}}>Try Again</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     );
   }
@@ -72,7 +101,7 @@ export default function App() {
           data={chat}
           keyExtractor={item => item.id}
           contentContainerStyle={styles.chatList}
-          onContentSizeChange={() => flatListRef.current.scrollToEnd()}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
           renderItem={({ item }) => (
             <View style={[styles.bubble, item.me ? styles.myBubble : styles.otherBubble]}>
               <Text style={[styles.msgText, item.me ? styles.myText : styles.otherText]}>{item.text}</Text>
@@ -85,7 +114,6 @@ export default function App() {
             value={message}
             onChangeText={setMessage}
             placeholder="Type your message..."
-            placeholderTextColor="#9CA3AF"
             style={styles.input}
           />
           <TouchableOpacity onPress={sendMessage} style={styles.sendBtn}>
@@ -106,17 +134,20 @@ const styles = StyleSheet.create({
   qrSub: { color: '#BFDBFE', fontSize: 14, marginTop: 8 },
   cameraContainer: { width: 280, height: 280, borderRadius: 24, overflow: 'hidden', borderWidth: 4, borderColor: 'white' },
   connecting: { color: 'white', marginTop: 20, fontWeight: 'bold' },
+  errorBox: { backgroundColor: 'white', padding: 20, borderRadius: 15, marginTop: 20, alignItems: 'center', marginHorizontal: 30 },
+  errorText: { color: '#1F2937', marginTop: 10, textAlign: 'center' },
+  retryBtn: { backgroundColor: '#3B82F6', padding: 10, borderRadius: 10, marginTop: 15 },
   header: { paddingVertical: 16, paddingHorizontal: 20, borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerText: { color: 'white', fontSize: 18, fontWeight: 'bold', marginLeft: 12, flex: 1 },
   chatList: { padding: 16, paddingBottom: 32 },
   bubble: { maxWidth: '80%', padding: 12, borderRadius: 18, marginVertical: 4 },
   myBubble: { alignSelf: 'flex-end', backgroundColor: '#3B82F6', borderBottomRightRadius: 2 },
-  otherBubble: { alignSelf: 'flex-start', backgroundColor: 'white', borderBottomLeftRadius: 2, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2 },
+  otherBubble: { alignSelf: 'flex-start', backgroundColor: 'white', borderBottomLeftRadius: 2, elevation: 2 },
   msgText: { fontSize: 16 },
   myText: { color: 'white' },
   otherText: { color: '#1F2937' },
   inputRow: { flexDirection: 'row', padding: 12, backgroundColor: 'white', alignItems: 'center', borderTopWidth: 1, borderColor: '#E5E7EB' },
-  input: { flex: 1, height: 44, backgroundColor: '#F3F4F6', borderRadius: 22, paddingHorizontal: 16, fontSize: 16, color: '#1F2937' },
+  input: { flex: 1, height: 44, backgroundColor: '#F3F4F6', borderRadius: 22, paddingHorizontal: 16 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#3B82F6', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }
 });
