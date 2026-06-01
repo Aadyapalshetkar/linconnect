@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, Button, TextInput, FlatList } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, SafeAreaView } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { io } from "socket.io-client";
+import { LinearGradient } from 'expo-linear-gradient';
+import { Send, Smartphone, Monitor, ShieldCheck, XCircle } from 'lucide-react-native';
 
 export default function App() {
   const [hasPermission, setHasPermission] = useCameraPermissions();
@@ -9,26 +11,26 @@ export default function App() {
   const [socket, setSocket] = useState(null);
   const [message, setMessage] = useState('');
   const [chat, setChat] = useState([]);
+  const flatListRef = useRef();
 
-  if (!hasPermission) {
-    return <View style={styles.container}><Text>Requesting for camera permission</Text><Button title="Grant Permission" onPress={setHasPermission} /></View>;
-  }
+  if (!hasPermission) return <View style={styles.centered}><Text>Requesting camera...</Text></View>;
+  if (!hasPermission.granted) return <View style={styles.centered}><Text>No camera access</Text></View>;
 
-  if (!hasPermission.granted) {
-      return <View style={styles.container}><Text>No access to camera</Text><Button title="Grant Permission" onPress={setHasPermission} /></View>;
-  }
-
-  const handleBarCodeScanned = ({ type, data }) => {
+  const handleBarCodeScanned = ({ data }) => {
     setScanned(true);
     const newSocket = io(data);
-    setSocket(newSocket);
-    newSocket.on("connect", () => console.log("Connected to Linux!"));
+    newSocket.on("connect", () => {
+      setSocket(newSocket);
+    });
+    newSocket.on("message", (msg) => {
+      setChat(prev => [...prev, { id: Date.now().toString(), text: msg, me: false }]);
+    });
   };
 
   const sendMessage = () => {
-    if (socket) {
+    if (message.trim() && socket) {
       socket.emit("message", message);
-      setChat([...chat, { id: Date.now().toString(), text: message, me: true }]);
+      setChat(prev => [...prev, { id: Date.now().toString(), text: message, me: true }]);
       setMessage('');
     }
   };
@@ -36,45 +38,85 @@ export default function App() {
   if (!socket) {
     return (
       <View style={styles.container}>
-        <Text style={styles.title}>Scan QR to Connect</Text>
-        <CameraView
-          onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
-          barcodeScannerSettings={{
-            barcodeTypes: ["qr"],
-          }}
-          style={StyleSheet.absoluteFillObject}
-        />
-        {scanned && <Button title={'Tap to Scan Again'} onPress={() => setScanned(false)} />}
+        <View style={styles.qrHeader}>
+          <Text style={styles.qrTitle}>Connect Linconnect</Text>
+          <Text style={styles.qrSub}>Scan the QR code in your Linux terminal</Text>
+        </View>
+        <View style={styles.cameraContainer}>
+          <CameraView
+            onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+            style={StyleSheet.absoluteFillObject}
+          />
+        </View>
+        {scanned && !socket && <Text style={styles.connecting}>Connecting...</Text>}
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Connected to Linux</Text>
-      <FlatList
-        data={chat}
-        keyExtractor={item => item.id}
-        renderItem={({ item }) => (
-          <View style={[styles.msg, item.me ? styles.myMsg : styles.otherMsg]}>
-            <Text>{item.text}</Text>
+    <SafeAreaView style={styles.safe}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.safe}>
+        <LinearGradient colors={['#3B82F6', '#4338CA']} style={styles.header}>
+          <View style={styles.headerRow}>
+            <Monitor color="white" size={24} />
+            <Text style={styles.headerText}>Terminal Connected</Text>
+            <TouchableOpacity onPress={() => { socket.disconnect(); setSocket(null); setScanned(false); }}>
+              <XCircle color="white" size={24} />
+            </TouchableOpacity>
           </View>
-        )}
-      />
-      <View style={styles.inputArea}>
-        <TextInput value={message} onChangeText={setMessage} style={styles.input} placeholder="Type message..." />
-        <Button title="Send" onPress={sendMessage} />
-      </View>
-    </View>
+        </LinearGradient>
+
+        <FlatList
+          ref={flatListRef}
+          data={chat}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.chatList}
+          onContentSizeChange={() => flatListRef.current.scrollToEnd()}
+          renderItem={({ item }) => (
+            <View style={[styles.bubble, item.me ? styles.myBubble : styles.otherBubble]}>
+              <Text style={[styles.msgText, item.me ? styles.myText : styles.otherText]}>{item.text}</Text>
+            </View>
+          )}
+        />
+
+        <View style={styles.inputRow}>
+          <TextInput
+            value={message}
+            onChangeText={setMessage}
+            placeholder="Type your message..."
+            placeholderTextColor="#9CA3AF"
+            style={styles.input}
+          />
+          <TouchableOpacity onPress={sendMessage} style={styles.sendBtn}>
+            <Send color="white" size={20} />
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', padding: 20 },
-  title: { fontSize: 20, marginBottom: 20, fontWeight: 'bold' },
-  inputArea: { flexDirection: 'row', marginTop: 20 },
-  input: { borderBottomWidth: 1, flex: 1, marginRight: 10 },
-  msg: { padding: 10, marginVertical: 5, borderRadius: 10 },
-  myMsg: { alignSelf: 'flex-end', backgroundColor: '#DCF8C6' },
-  otherMsg: { alignSelf: 'flex-start', backgroundColor: '#ECECEC' }
+  safe: { flex: 1, backgroundColor: '#F9FAFB' },
+  container: { flex: 1, backgroundColor: '#3B82F6', alignItems: 'center', justifyContent: 'center' },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  qrHeader: { position: 'absolute', top: 80, alignItems: 'center', zIndex: 10 },
+  qrTitle: { color: 'white', fontSize: 24, fontWeight: 'bold' },
+  qrSub: { color: '#BFDBFE', fontSize: 14, marginTop: 8 },
+  cameraContainer: { width: 280, height: 280, borderRadius: 24, overflow: 'hidden', borderWidth: 4, borderColor: 'white' },
+  connecting: { color: 'white', marginTop: 20, fontWeight: 'bold' },
+  header: { paddingVertical: 16, paddingHorizontal: 20, borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  headerText: { color: 'white', fontSize: 18, fontWeight: 'bold', marginLeft: 12, flex: 1 },
+  chatList: { padding: 16, paddingBottom: 32 },
+  bubble: { maxWidth: '80%', padding: 12, borderRadius: 18, marginVertical: 4 },
+  myBubble: { alignSelf: 'flex-end', backgroundColor: '#3B82F6', borderBottomRightRadius: 2 },
+  otherBubble: { alignSelf: 'flex-start', backgroundColor: 'white', borderBottomLeftRadius: 2, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2 },
+  msgText: { fontSize: 16 },
+  myText: { color: 'white' },
+  otherText: { color: '#1F2937' },
+  inputRow: { flexDirection: 'row', padding: 12, backgroundColor: 'white', alignItems: 'center', borderTopWidth: 1, borderColor: '#E5E7EB' },
+  input: { flex: 1, height: 44, backgroundColor: '#F3F4F6', borderRadius: 22, paddingHorizontal: 16, fontSize: 16, color: '#1F2937' },
+  sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#3B82F6', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }
 });
