@@ -1,8 +1,8 @@
 const { Server } = require("socket.io");
 const qrcode = require("qrcode-terminal");
-const localtunnel = require("localtunnel");
 const blessed = require("blessed");
 const chalk = require("chalk");
+const { spawn } = require("child_process");
 
 const PORT = 3000;
 const io = new Server(PORT, { 
@@ -21,7 +21,7 @@ const chatBox = blessed.log({
 });
 const statusBar = blessed.box({
   top: '80%', left: 0, width: '100%', height: '8%',
-  content: " {bold}Status:{/bold} Initializing Tunnel... ",
+  content: " {bold}Status:{/bold} Initializing SSH Tunnel... ",
   style: { fg: 'white', bg: '#1E293B' }, tags: true
 });
 const inputField = blessed.textbox({
@@ -41,29 +41,37 @@ function log(msg) {
 
 let activeSocket = null;
 
-async function startServer() {
-  log(chalk.blue.bold(" LINCONNECT V2.2 (CONNECTION FIX) "));
-  log(" Creating secure tunnel...");
+function startTunnel() {
+  log(chalk.blue.bold(" LINCONNECT V2.3 (SSH TUNNEL) "));
+  log(" Creating stable tunnel via localhost.run...");
 
-  try {
-    const tunnel = await localtunnel({ port: PORT });
+  // Using SSH tunnel which is more stable than localtunnel for WSL2
+  const ssh = spawn("ssh", ["-R", "80:localhost:3000", "nokey@localhost.run"]);
+
+  ssh.stdout.on("data", (data) => {
+    const output = data.toString();
+    const urlMatch = output.match(/https:\/\/[a-z0-9-.]+/);
     
-    // We append /?bypass=1 to bypass the localtunnel warning page
-    const tunnelUrl = tunnel.url;
-    log(chalk.green("✔ Tunnel Active: ") + tunnelUrl);
-    log(" Scan this code on your phone:");
+    if (urlMatch) {
+      const tunnelUrl = urlMatch[0];
+      log(chalk.green("✔ Tunnel Active: ") + tunnelUrl);
+      log(" Scan this code on your phone:");
 
-    qrcode.generate(tunnelUrl, { small: true }, (code) => {
-      chatBox.log(code);
+      qrcode.generate(tunnelUrl, { small: true }, (code) => {
+        chatBox.log(code);
+        screen.render();
+      });
+
+      statusBar.setContent(" {bold}Status:{/bold} {yellow-fg}Waiting for phone...{/yellow-fg} ");
       screen.render();
-    });
+    }
+  });
 
-    statusBar.setContent(" {bold}Status:{/bold} {yellow-fg}Waiting for phone...{/yellow-fg} ");
-    screen.render();
-
-  } catch (err) {
-    log(chalk.red("Tunnel Error: " + err.message));
-  }
+  ssh.stderr.on("data", (data) => {
+    const err = data.toString();
+    if (err.includes("Warning")) return;
+    log(chalk.gray("Tunnel: " + err.trim()));
+  });
 }
 
 io.on("connection", (socket) => {
@@ -95,4 +103,4 @@ inputField.on('submit', (value) => {
 
 screen.key(['escape', 'q', 'C-c'], () => process.exit(0));
 inputField.focus();
-startServer();
+startTunnel();
